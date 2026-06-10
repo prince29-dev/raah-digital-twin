@@ -1,9 +1,18 @@
+'use client';
+
+import dynamic from 'next/dynamic';
+
+const Map = dynamic(() => import('./Map'), {
+  ssr: false,
+});
+
 export default function Home() {
   return (
-    <main className="flex items-center justify-center h-screen">
-      <h1 className="text-3xl font-bold">
-        Raah Digital Twin 🚀
+    <main>
+      <h1 className="text-center text-2xl font-bold p-4">
+        Raah Digital Twin 🌍
       </h1>
+      <Map />
     </main>
   );
 }
