@@ -1,4 +1,7 @@
 'use client';
+type SidebarProps = {
+  onClose?: () => void;
+};
 
 import { useRaahStore } from '../utils/store';
 import { TRAFFIC_COLORS, TRAFFIC_BG, TRAFFIC_LABELS, NODE_TYPE_ICONS } from '../utils/colors';
@@ -42,7 +45,7 @@ function TrafficBadge({ level }: { level: TrafficLevel }) {
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({ onClose }: SidebarProps) {
   const { nodes, metrics, selectedNode, selectNode, whatIf, logs } = useRaahStore();
 
   return (

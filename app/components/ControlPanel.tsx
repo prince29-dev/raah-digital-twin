@@ -1,4 +1,7 @@
 'use client';
+type ControlPanelProps = {
+  onMenuClick?: () => void;
+};
 
 import { useRaahStore } from '../utils/store';
 
@@ -36,7 +39,7 @@ function ControlButton({ onClick, label, icon, accent, active, title }: ButtonPr
   );
 }
 
-export default function ControlPanel() {
+export default function ControlPanel({ onMenuClick }: ControlPanelProps) {
   const {
     simulate,
     propagate,
