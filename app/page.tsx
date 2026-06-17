@@ -11,44 +11,44 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen w-screen overflow-hidden bg-[#0a0c14] text-white">
+    <div className="flex h-screen w-screen bg-[#0a0c14] text-white">
 
-      {/* Desktop Sidebar */}
-      <div className="hidden lg:flex w-[300px] h-full flex-shrink-0">
-        <Sidebar />
+      {/* 🖥️ DESKTOP SIDEBAR */}
+      <div className="hidden lg:block w-[300px] border-r border-white/10 z-20">
+        <Sidebar onClose={() => setSidebarOpen(false)} />
       </div>
 
-      {/* Main */}
-      <div className="flex flex-col flex-1 min-w-0">
-
-        {/* Control Panel */}
-        <ControlPanel onMenuClick={() => setSidebarOpen(true)} />
-
-        {/* Map */}
-        <div className="flex-1 relative h-full">
-          <RaahMap />
-        </div>
-
-        {/* Mobile Bottom Panel */}
-        <div className="lg:hidden h-[35%] overflow-y-auto border-t border-white/10">
-          <Sidebar />
-        </div>
-      </div>
-
-      {/* Mobile Drawer */}
+      {/* 📱 MOBILE SIDEBAR */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
 
+          {/* backdrop */}
           <div
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0 bg-black/60"
             onClick={() => setSidebarOpen(false)}
           />
 
-          <div className="relative z-10 w-[80%] max-w-[280px] bg-[#0a0c14] h-full">
+          {/* drawer */}
+          <div className="relative w-[280px] bg-[#0a0c14] z-50">
             <Sidebar onClose={() => setSidebarOpen(false)} />
           </div>
         </div>
       )}
+
+      {/* 📍 MAIN AREA */}
+      <div className="flex-1 flex flex-col relative">
+
+        {/* TOP BAR */}
+        <div className="z-30">
+          <ControlPanel onMenuClick={() => setSidebarOpen(true)} />
+        </div>
+
+        {/* MAP AREA */}
+        <div className="flex-1 relative z-0">
+          <RaahMap />
+        </div>
+
+      </div>
     </div>
   );
 }
