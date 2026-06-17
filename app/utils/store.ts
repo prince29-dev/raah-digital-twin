@@ -1,136 +1,261 @@
 import { create } from 'zustand';
-import { NodeType, INITIAL_NODES, ROUTES, RouteType } from '../data/nodes';
+import { NodeType, RouteType, INITIAL_NODES, ROUTES, PeakHour } from '../data/nodes';
 import {
-  propagateTraffic,
-  randomiseTraffic,
-  whatIfScenario,
-  resetTraffic,
-  computeMetrics,
-  TrafficMetrics,
+  simulationTick, whatIfScenario, resetNodes,
+  computeMetrics, TrafficMetrics, EngineEvent,
 } from '../simulation/engine';
+import {
+  predictNextState, PredictionResult,
+  estimateETA, ETAResult,
+  suggestRoutes, RouteOption,
+  applyPeakPattern, getCurrentPeakHour,
+  buildHeatmap, HeatmapPoint,
+} from '../ml/predictor';
 
-export type SimulationLog = {
-  id: string;
-  timestamp: string;
-  action: string;
-  detail?: string;
+export type SimSpeed = 'slow' | 'normal' | 'fast';
+export const SIM_INTERVALS: Record<SimSpeed, number> = {
+  slow: 3000, normal: 1800, fast: 700,
+};
+
+export type WhatIfMeta = {
+  targetId: number;
+  affectedIds: number[];
+  active: boolean;
 };
 
 type RaahStore = {
+  // ── Core state ──
   nodes: NodeType[];
   routes: RouteType[];
   metrics: TrafficMetrics;
-  selectedNode: NodeType | null;
+  prevAvgScore: number;
+
+  // ── Simulation ──
+  tick: number;
   isSimulating: boolean;
-  simulationStep: number;
-  logs: SimulationLog[];
+  simSpeed: SimSpeed;
+  peakHour: PeakHour;
+  intervalRef: ReturnType<typeof setInterval> | null;
 
-  // Actions
-  simulate: () => void;
-  propagate: () => void;
+  // ── UI selection ──
+  selectedNode: NodeType | null;
+  routeFrom: number | null;
+  routeTo: number | null;
+
+  // ── ML outputs ──
+  predictions: PredictionResult[];
+  eta: ETAResult | null;
+  routeOptions: RouteOption[];
+  heatmap: HeatmapPoint[];
+  showHeatmap: boolean;
+  showPredictions: boolean;
+
+  // ── What-if ──
+  whatIfMeta: WhatIfMeta | null;
+
+  // ── Logs ──
+  events: EngineEvent[];
+
+  // ── Actions ──
+  tick_step: () => void;
+  startSimulation: () => void;
+  stopSimulation: () => void;
+  setSimSpeed: (s: SimSpeed) => void;
+  setPeakHour: (p: PeakHour) => void;
+  applyPeak: (p: PeakHour) => void;
+  runWhatIf: (nodeId: number) => void;
+  clearWhatIf: () => void;
   reset: () => void;
-  whatIf: (nodeId: number) => void;
-  selectNode: (node: NodeType | null) => void;
-  autoSimulate: () => void;
+  selectNode: (n: NodeType | null) => void;
+  setRouteFrom: (id: number | null) => void;
+  setRouteTo: (id: number | null) => void;
+  computeRoute: () => void;
+  runPrediction: () => void;
+  toggleHeatmap: () => void;
+  togglePredictions: () => void;
 };
 
-const addLog = (
-  logs: SimulationLog[],
-  action: string,
-  detail?: string
-): SimulationLog[] => {
-  const entry: SimulationLog = {
-    id: Math.random().toString(36).slice(2),
-    timestamp: new Date().toLocaleTimeString(),
-    action,
-    detail,
-  };
-  return [entry, ...logs].slice(0, 20); // keep last 20
-};
+const cloneNodes = (nodes: NodeType[]): NodeType[] =>
+  nodes.map((n) => ({ ...n, historicalTraffic: [...n.historicalTraffic] }));
 
 export const useRaahStore = create<RaahStore>((set, get) => ({
-  nodes: INITIAL_NODES,
+  nodes: cloneNodes(INITIAL_NODES),
   routes: ROUTES,
-  metrics: computeMetrics(INITIAL_NODES),
-  selectedNode: null,
+  metrics: computeMetrics(cloneNodes(INITIAL_NODES)),
+  prevAvgScore: 35,
+
+  tick: 0,
   isSimulating: false,
-  simulationStep: 0,
-  logs: [
+  simSpeed: 'normal',
+  peakHour: getCurrentPeakHour(),
+  intervalRef: null,
+
+  selectedNode: null,
+  routeFrom: null,
+  routeTo: null,
+
+  predictions: [],
+  eta: null,
+  routeOptions: [],
+  heatmap: [],
+  showHeatmap: false,
+  showPredictions: false,
+
+  whatIfMeta: null,
+  events: [
     {
-      id: 'init',
-      timestamp: new Date().toLocaleTimeString(),
-      action: 'System initialised',
-      detail: `${INITIAL_NODES.length} nodes loaded`,
+      id: 'init', tick: 0, timestamp: new Date().toLocaleTimeString(),
+      action: 'Digital Twin initialised',
+      detail: `${INITIAL_NODES.length} nodes · ${ROUTES.length} routes loaded`,
+      severity: 'info',
     },
   ],
 
-  simulate: () => {
-    const { nodes, logs } = get();
-    const updated = randomiseTraffic(nodes);
+  // ── Tick ─────────────────────────────────────────────────────────────────
+  tick_step: () => {
+    const { nodes, tick, peakHour, events, metrics } = get();
+    const { nodes: updated, events: newEvts } = simulationTick(nodes, tick + 1, peakHour);
+    const newMetrics = computeMetrics(updated, metrics.avgCongestionScore);
     set({
       nodes: updated,
-      metrics: computeMetrics(updated),
-      simulationStep: get().simulationStep + 1,
-      logs: addLog(logs, 'Traffic simulated', 'Random traffic pattern applied'),
+      tick: tick + 1,
+      metrics: newMetrics,
+      prevAvgScore: metrics.avgCongestionScore,
+      events: [...newEvts, ...events].slice(0, 50),
+      heatmap: get().showHeatmap ? buildHeatmap(updated) : get().heatmap,
+      predictions: get().showPredictions ? predictNextState(updated, peakHour) : get().predictions,
     });
   },
 
-  propagate: () => {
-    const { nodes, logs } = get();
-    const updated = propagateTraffic(nodes);
-    set({
-      nodes: updated,
-      metrics: computeMetrics(updated),
-      simulationStep: get().simulationStep + 1,
-      logs: addLog(logs, 'Traffic propagated', 'Congestion spread to neighbours'),
-    });
+  // ── Auto simulation ───────────────────────────────────────────────────────
+  startSimulation: () => {
+    const { isSimulating, simSpeed } = get();
+    if (isSimulating) return;
+    const ref = setInterval(() => {
+      useRaahStore.getState().tick_step();
+    }, SIM_INTERVALS[simSpeed]);
+    set({ isSimulating: true, intervalRef: ref });
   },
 
-  reset: () => {
-    const { nodes, logs } = get();
-    const updated = resetTraffic(nodes, INITIAL_NODES);
-    set({
-      nodes: updated,
-      metrics: computeMetrics(updated),
-      simulationStep: 0,
-      selectedNode: null,
-      logs: addLog(logs, 'System reset', 'Restored initial state'),
-    });
+  stopSimulation: () => {
+    const { intervalRef } = get();
+    if (intervalRef) clearInterval(intervalRef);
+    set({ isSimulating: false, intervalRef: null });
   },
 
-  whatIf: (nodeId: number) => {
-    const { nodes, logs } = get();
-    const target = nodes.find((n) => n.id === nodeId);
-    if (!target) return;
-    const updated = whatIfScenario(nodes, nodeId);
-    set({
-      nodes: updated,
-      metrics: computeMetrics(updated),
-      simulationStep: get().simulationStep + 1,
-      logs: addLog(
-        logs,
-        `What-if: ${target.name} → HIGH`,
-        'Congestion propagated to adjacent nodes'
-      ),
-    });
-  },
-
-  selectNode: (node) => set({ selectedNode: node }),
-
-  autoSimulate: () => {
-    const { isSimulating } = get();
+  setSimSpeed: (s) => {
+    const { isSimulating, intervalRef } = get();
+    if (intervalRef) clearInterval(intervalRef);
     if (isSimulating) {
-      set({ isSimulating: false });
-      return;
+      const ref = setInterval(() => {
+        useRaahStore.getState().tick_step();
+      }, SIM_INTERVALS[s]);
+      set({ simSpeed: s, intervalRef: ref });
+    } else {
+      set({ simSpeed: s });
     }
-    set({ isSimulating: true });
-    const interval = setInterval(() => {
-      const { isSimulating: still } = useRaahStore.getState();
-      if (!still) {
-        clearInterval(interval);
-        return;
-      }
-      useRaahStore.getState().propagate();
-    }, 2000);
+  },
+
+  // ── Peak hour ─────────────────────────────────────────────────────────────
+  setPeakHour: (p) => set({ peakHour: p }),
+
+  applyPeak: (p: PeakHour) => {
+    const { nodes, events, tick } = get();
+    const updated = applyPeakPattern(nodes, p);
+    const newMetrics = computeMetrics(updated);
+    set({
+      nodes: updated, peakHour: p,
+      metrics: newMetrics,
+      events: [{
+        id: Math.random().toString(36).slice(2),
+        tick, timestamp: new Date().toLocaleTimeString(),
+        action: `Peak pattern: ${p.toUpperCase()}`,
+        detail: 'Traffic recalibrated for time-of-day',
+        severity: 'info',
+      }, ...events].slice(0, 50),
+    });
+  },
+
+  // ── What-if ───────────────────────────────────────────────────────────────
+  runWhatIf: (nodeId) => {
+    const { nodes, events, tick } = get();
+    const { nodes: updated, affectedIds, events: newEvts } = whatIfScenario(nodes, nodeId, tick);
+    const newMetrics = computeMetrics(updated);
+    set({
+      nodes: updated,
+      metrics: newMetrics,
+      whatIfMeta: { targetId: nodeId, affectedIds, active: true },
+      events: [...newEvts, ...events].slice(0, 50),
+      tick: tick + 1,
+    });
+  },
+
+  clearWhatIf: () => {
+    set({ whatIfMeta: null });
+  },
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  reset: () => {
+    const { intervalRef } = get();
+    if (intervalRef) clearInterval(intervalRef);
+    const fresh = resetNodes();
+    set({
+      nodes: fresh,
+      metrics: computeMetrics(fresh),
+      tick: 0,
+      isSimulating: false,
+      intervalRef: null,
+      selectedNode: null,
+      whatIfMeta: null,
+      predictions: [],
+      eta: null,
+      routeOptions: [],
+      heatmap: [],
+      routeFrom: null,
+      routeTo: null,
+      peakHour: getCurrentPeakHour(),
+      events: [{
+        id: 'reset', tick: 0, timestamp: new Date().toLocaleTimeString(),
+        action: 'System reset', detail: 'Restored initial state', severity: 'info',
+      }],
+    });
+  },
+
+  // ── Node selection ────────────────────────────────────────────────────────
+  selectNode: (n) => set({ selectedNode: n }),
+
+  // ── Route planning ────────────────────────────────────────────────────────
+  setRouteFrom: (id) => set({ routeFrom: id, eta: null, routeOptions: [] }),
+  setRouteTo:   (id) => set({ routeTo:   id, eta: null, routeOptions: [] }),
+
+  computeRoute: () => {
+    const { nodes, routes, routeFrom, routeTo } = get();
+    if (routeFrom === null || routeTo === null) return;
+    const eta     = estimateETA(nodes, routes, routeFrom, routeTo);
+    const options = suggestRoutes(nodes, routes, routeFrom, routeTo);
+    set({ eta, routeOptions: options });
+  },
+
+  // ── ML ────────────────────────────────────────────────────────────────────
+  runPrediction: () => {
+    const { nodes, peakHour } = get();
+    const predictions = predictNextState(nodes, peakHour);
+    set({ predictions, showPredictions: true });
+  },
+
+  toggleHeatmap: () => {
+    const { showHeatmap, nodes } = get();
+    set({
+      showHeatmap: !showHeatmap,
+      heatmap: !showHeatmap ? buildHeatmap(nodes) : [],
+    });
+  },
+
+  togglePredictions: () => {
+    const { showPredictions, nodes, peakHour } = get();
+    set({
+      showPredictions: !showPredictions,
+      predictions: !showPredictions ? predictNextState(nodes, peakHour) : [],
+    });
   },
 }));
