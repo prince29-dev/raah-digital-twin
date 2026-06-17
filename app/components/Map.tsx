@@ -1,36 +1,58 @@
 'use client';
 
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import { useEffect } from 'react';
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Polyline,
+} from 'react-leaflet';
+import { useEffect, useMemo } from 'react';
 import L from 'leaflet';
 import { useRaahStore } from '../utils/store';
 import { TRAFFIC_COLORS, TRAFFIC_BG, buildLeafletIcon } from '../utils/colors';
 import { TrafficLevel, NodeType } from '../data/nodes';
 
-// Fix leaflet default icon bug in Next.js
+/* ---------------- FIX LEAFLET ICON ---------------- */
 function FixLeafletIcons() {
   useEffect(() => {
-    // @ts-expect-error leaflet private
+    // @ts-ignore
     delete L.Icon.Default.prototype._getIconUrl;
+
     L.Icon.Default.mergeOptions({
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconRetinaUrl:
+        'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+      iconUrl:
+        'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+      shadowUrl:
+        'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
     });
   }, []);
+
   return null;
 }
 
-function NodeMarker({ node, isSelected }: { node: NodeType; isSelected: boolean }) {
+/* ---------------- NODE MARKER ---------------- */
+function NodeMarker({
+  node,
+  isSelected,
+}: {
+  node: NodeType;
+  isSelected: boolean;
+}) {
   const { selectNode, whatIf } = useRaahStore();
+
   const color = TRAFFIC_COLORS[node.traffic as TrafficLevel];
 
-  const icon = L.divIcon({
-    className: '',
-    html: buildLeafletIcon(node.traffic as TrafficLevel, isSelected),
-    iconSize: isSelected ? [22, 22] : [16, 16],
-    iconAnchor: isSelected ? [11, 11] : [8, 8],
-  });
+  // 🔥 PERFORMANCE: memo icon
+  const icon = useMemo(() => {
+    return L.divIcon({
+      className: '',
+      html: buildLeafletIcon(node.traffic as TrafficLevel, isSelected),
+      iconSize: isSelected ? [22, 22] : [16, 16],
+      iconAnchor: isSelected ? [11, 11] : [8, 8],
+    });
+  }, [node.traffic, isSelected]);
 
   return (
     <Marker
@@ -40,70 +62,48 @@ function NodeMarker({ node, isSelected }: { node: NodeType; isSelected: boolean 
         click: () => selectNode(isSelected ? null : node),
       }}
     >
-      <Popup
-        closeButton={false}
-        className="raah-popup"
-      >
+      <Popup closeButton={false} className="raah-popup">
         <div
           style={{
             background: '#0f1117',
             border: `1px solid ${color}44`,
             borderRadius: 12,
-            padding: '12px 16px',
+            padding: '12px',
             minWidth: 200,
-            fontFamily: 'system-ui, sans-serif',
           }}
         >
-          <div className="flex items-center gap-2 mb-2">
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                background: color,
-                boxShadow: `0 0 8px ${color}`,
-                display: 'inline-block',
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>{node.name}</span>
-          </div>
-          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
+          <b style={{ color: '#fff' }}>{node.name}</b>
+
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>
             {node.description}
           </div>
+
           <div
             style={{
-              display: 'inline-block',
+              marginTop: 6,
               fontSize: 11,
-              fontWeight: 600,
               padding: '2px 8px',
               borderRadius: 20,
-              background: TRAFFIC_BG[node.traffic as TrafficLevel],
+              background: TRAFFIC_BG[node.traffic],
               color: color,
-              border: `1px solid ${color}44`,
-              marginBottom: 8,
             }}
           >
-            {node.traffic.toUpperCase()} TRAFFIC
+            {node.traffic.toUpperCase()}
           </div>
-          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-            Connections: {node.connections.length} nodes
-          </div>
+
           <button
             onClick={() => whatIf(node.id)}
             style={{
+              marginTop: 10,
               width: '100%',
               padding: '6px',
               borderRadius: 8,
-              background: 'rgba(239,68,68,0.15)',
+              background: '#ef444422',
               color: '#fca5a5',
-              border: '1px solid rgba(239,68,68,0.3)',
               fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
             }}
           >
-            ⚠️ What-if Scenario
+            What-if 🔥
           </button>
         </div>
       </Popup>
@@ -111,9 +111,14 @@ function NodeMarker({ node, isSelected }: { node: NodeType; isSelected: boolean 
   );
 }
 
+/* ---------------- ROUTE LINES ---------------- */
 function RouteLines() {
   const { nodes, routes } = useRaahStore();
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+
+  const nodeMap = useMemo(
+    () => new Map(nodes.map((n) => [n.id, n])),
+    [nodes]
+  );
 
   return (
     <>
@@ -122,56 +127,57 @@ function RouteLines() {
         const to = nodeMap.get(route.to);
         if (!from || !to) return null;
 
-        // Color the route by the worse end
-        const fromWeight = from.traffic === 'high' ? 3 : from.traffic === 'medium' ? 2 : 1;
-        const toWeight = to.traffic === 'high' ? 3 : to.traffic === 'medium' ? 2 : 1;
-        const worse = Math.max(fromWeight, toWeight);
-        const routeColor =
-          worse === 3 ? '#ef444480' : worse === 2 ? '#f59e0b80' : '#22c55e50';
-        const weight = worse === 3 ? 3 : worse === 2 ? 2 : 1.5;
+        const level = Math.max(
+          from.traffic === 'high' ? 3 : from.traffic === 'medium' ? 2 : 1,
+          to.traffic === 'high' ? 3 : to.traffic === 'medium' ? 2 : 1
+        );
+
+        const color =
+          level === 3
+            ? '#ef4444aa'
+            : level === 2
+            ? '#f59e0baa'
+            : '#22c55e88';
 
         return (
           <Polyline
             key={route.id}
             positions={[from.position, to.position]}
-            color={routeColor}
-            weight={weight}
+            color={color}
+            weight={level}
+            smoothFactor={2}
             dashArray={route.busRoute ? undefined : '6 4'}
-          >
-            <Popup closeButton={false}>
-              <div style={{ background: '#0f1117', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#e2e8f0' }}>
-                <b>{route.name}</b>
-                {route.busRoute && (
-                  <div style={{ color: '#818cf8', marginTop: 4 }}>🚌 {route.busRoute}</div>
-                )}
-              </div>
-            </Popup>
-          </Polyline>
+          />
         );
       })}
     </>
   );
 }
 
-// Dark Carto tile layer for the smart-city aesthetic
-const DARK_TILE = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+/* ---------------- MAIN MAP ---------------- */
+const DARK_TILE =
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
 export default function RaahMap() {
   const { nodes, selectedNode } = useRaahStore();
+
   const CENTER: [number, number] = [24.5854, 73.7125];
 
   return (
-    <div style={{ flex: 1, position: 'relative' }}>
+    <div className="h-full w-full relative">
+
       <MapContainer
         center={CENTER}
         zoom={13}
-        style={{ height: '100%', width: '100%', background: '#0a0c14' }}
+        className="h-full w-full"
         zoomControl={false}
       >
         <FixLeafletIcons />
-        <TileLayer url={DARK_TILE} attribution={DARK_ATTR} />
+
+        <TileLayer url={DARK_TILE} />
+
         <RouteLines />
+
         {nodes.map((node) => (
           <NodeMarker
             key={`${node.id}-${node.traffic}`}
@@ -181,46 +187,19 @@ export default function RaahMap() {
         ))}
       </MapContainer>
 
-      {/* Map legend */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 24,
-          right: 16,
-          background: 'rgba(10,12,20,0.9)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 12,
-          padding: '10px 14px',
-          backdropFilter: 'blur(12px)',
-          zIndex: 1000,
-        }}
-      >
-        <p style={{ fontSize: 10, color: '#64748b', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Traffic Level
-        </p>
+      {/* 🔥 LEGEND (RESPONSIVE) */}
+      <div className="absolute bottom-4 right-4 bg-black/80 p-3 rounded-xl text-xs backdrop-blur hidden sm:block">
+        <p className="text-gray-400 mb-2">Traffic</p>
+
         {(['low', 'medium', 'high'] as TrafficLevel[]).map((level) => (
-          <div key={level} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div key={level} className="flex items-center gap-2 mb-1">
             <span
-              style={{
-                width: 10, height: 10, borderRadius: '50%',
-                background: TRAFFIC_COLORS[level],
-                boxShadow: `0 0 6px ${TRAFFIC_COLORS[level]}88`,
-                display: 'inline-block',
-              }}
+              className="w-2 h-2 rounded-full"
+              style={{ background: TRAFFIC_COLORS[level] }}
             />
-            <span style={{ fontSize: 11, color: '#94a3b8', textTransform: 'capitalize' }}>{level}</span>
+            <span className="text-gray-300 capitalize">{level}</span>
           </div>
         ))}
-        <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-            <span style={{ width: 20, height: 2, background: '#22c55e50', display: 'inline-block' }} />
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>Road</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 20, height: 2, background: '#818cf8', display: 'inline-block' }} />
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>Bus Route</span>
-          </div>
-        </div>
       </div>
     </div>
   );
